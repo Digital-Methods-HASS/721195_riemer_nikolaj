@@ -1,0 +1,1006 @@
+---
+title: 'Sentiment analysis: Climate-related speeches by danish prime ministers Anders Fogh and Mette Frederiksen'
+date: '26 May 2025'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE,
+                      message = FALSE)
+
+library(tidyverse)
+library(here)
+
+# For text mining:
+
+library(pdftools)
+library(tidytext)
+library(textdata) 
+library(ggwordcloud)
+```
+
+### SPEECH NUMBER ONE ('fogh1')
+"Prime Minister Anders Fogh Rasmussen’s opening speech in Beijing on 23 October 2008 at the Chinese-Danish Climate Change Conference"
+#Get the first speech:
+```{r get-document1}
+fogh1_path <- here("data","fogh1.pdf")
+fogh1_text <- pdf_text(fogh1_path)
+```
+
+### Some wrangling:
+- Here I split up the pages into separate lines (separated by `\n`) using `stringr::str_split()`
+- Unnest into regular columns using `tidyr::unnest()`
+- Remove leading/trailing white space with `stringr::str_trim()`
+
+```{r split-lines1}
+fogh1_df <- data.frame(fogh1_text) %>% 
+  mutate(text_full = str_split(fogh1_text, pattern = '\n')) %>% 
+  unnest(text_full) %>% 
+  mutate(text_full = str_trim(text_full)) 
+
+```
+
+Now each line, on each page, is its own row, with extra starting & trailing spaces removed. 
+
+### Get the tokens (individual words) in tidy format
+
+Here I use `tidytext::unnest_tokens()` (which pulls from the `tokenizer`) package, to split columns into tokens. I am interested in *words*, so that's the token we'll use:
+
+```{r tokenize1}
+fogh1_tokens <- fogh1_df %>% 
+  unnest_tokens(word, text_full)
+
+```
+
+Then I count the words
+```{r count-words1}
+fogh1_wc <- fogh1_tokens %>% 
+  count(word) %>% 
+  arrange(-n)
+fogh1_wc
+```
+
+At this point I notice that a whole bunch of things show up frequently that we might not be interested in ("the", "and", "to", etc.). These are called *stop words*. I will remove them.
+
+### Remove stop words:
+
+I remove stop words using `tidyr::anti_join()`:
+```{r stopwords1}
+fogh1_stop <- fogh1_tokens %>% 
+  anti_join(stop_words) %>% 
+  select(-fogh1_text)
+```
+
+And then check the counts again: 
+```{r count-words1.2}
+fogh1_swc <- fogh1_stop %>% 
+  count(word) %>% 
+  arrange(-n)
+fogh1_swc
+```
+
+Since I am interested in the words, I now want to get rid of all the numbers (non-text) in `fogh1_stop`
+```{r skip-numbers1}
+
+fogh1_no_numeric <- fogh1_stop %>% 
+  filter(is.na(as.numeric(word)))
+```
+
+### A word cloud of the first speech, 'fogh1'.
+
+```{r wordcloud-prep1}
+length(unique(fogh1_no_numeric$word))
+
+# I filter the wordcloud to only include the top 100 most frequent words
+
+fogh1_top100 <- fogh1_no_numeric %>% 
+  count(word) %>% 
+  arrange(-n) %>% 
+  head(100)
+fogh1_top100
+```
+
+```{r wordcloud1}
+fogh1_cloud <- ggplot(data = fogh1_top100, aes(label = word)) +
+  geom_text_wordcloud_area(aes(color = n), shape = "pentagram") +
+  scale_size_area(max_size = 12) +
+  scale_color_gradientn(colors = c("darkgreen","blue","red")) +
+  theme_minimal()
+
+
+# Save it
+ggsave(plot = fogh1_cloud, 
+       here("figures","fogh1_wordcloud.png"), 
+       height = 8, 
+       width = 5)
+
+fogh1_cloud
+```
+
+### Sentiment analysis
+
+Next I do sentiment analysis on the 'fogh1'-text data using the 'afinn', and 'nrc' general-purpose lexicons.
+The three general-purpose lexicons are
+
+  -  AFINN from Finn Årup Nielsen,
+  -  nrc from Saif Mohammad and Peter Turney
+
+The AFINN lexicon assigns words with a score that runs between -5 and 5, with negative scores indicating negative sentiment and positive scores indicating positive sentiment.
+
+The nrc lexicon categorizes words in a binary fashion (“yes”/“no”) into categories of positive, negative, anger, anticipation, disgust, fear, joy, sadness, surprise, and trust.
+
+
+"afinn": Words ranked from -5 (very negative) to +5 (very positive)
+```{r afinn1}
+get_sentiments(lexicon = "afinn")
+
+afinn_words <- get_sentiments("afinn") %>% 
+  filter(value %in% c(-4,-3,-2,-1,1,2,3,4,5))
+
+ 
+afinn_words
+```
+
+
+"nrc":
+```{r nrc1}
+get_sentiments(lexicon = "nrc")
+
+```
+
+nrc:https://saifmohammad.com/WebPages/NRC-Emotion-Lexicon.htm
+Includes bins for 8 emotions (anger, anticipation, disgust, fear, joy, sadness, surprise, trust) and positive / negative. 
+
+**Citation for NRC lexicon**: Crowdsourcing a Word-Emotion Association Lexicon, Saif Mohammad and Peter Turney, Computational Intelligence, 29 (3), 436-465, 2013.
+
+
+### Sentiment analysis with afinn: 
+
+First I bind the words in `fogh1_stop` to `afinn` lexicon:
+```{r bind-afinn1}
+fogh1_afinn <- fogh1_stop %>% 
+  inner_join(get_sentiments("afinn"))
+fogh1_afinn
+```
+
+Then I find some counts (by sentiment ranking):
+```{r count-afinn1}
+fogh1_afinn_hist <- fogh1_afinn %>% 
+  count(value)
+
+# And plot them: 
+ggplot(data = fogh1_afinn_hist, aes(x = value, y = n)) +
+  geom_col(aes(fill = value)) +
+  theme_bw()
+```
+
+I want to investigate some of the words in a bit more depth:
+```{r afinn-1.2}
+# I want to know what these '2' words are
+fogh1_afinn2 <- fogh1_afinn %>% 
+  filter(value == 2)
+```
+
+```{r afinn-1.2-more}
+# I check the unique 2-score words:
+unique(fogh1_afinn2$word)
+
+# Then count & plot them:
+fogh1_afinn2_n <- fogh1_afinn2 %>% 
+  count(word, sort = TRUE) %>% 
+  mutate(word = fct_reorder(factor(word), n))
+
+
+ggplot(data = fogh1_afinn2_n, aes(x = word, y = n)) +
+  geom_col() +
+  coord_flip() +
+  theme_bw()
+
+# So, of the 2-score words 'growth' is used far more often.
+```
+
+
+Summary of the sentiment of the speech, fogh1:
+```{r summarize-afinn1}
+fogh1_summary <- fogh1_afinn %>% 
+  summarize(
+    mean_score = mean(value),
+    median_score = median(value)
+  )
+fogh1_summary 
+
+# mean score of 0,64 and median score of 1 tells me that the first speech, fogh1, is overall somewhat negative in terms of the sentiment.
+```
+
+### NRC lexicon for sentiment analysis
+
+With the NRC lexicon I can "bin" the words of the text by the feelings they're typically associated with. As above, I use inner_join() to combine the fogh1 non-stopword text with the nrc lexicon: 
+
+```{r bind-nrc1}
+fogh1_nrc <- fogh1_stop %>% 
+  inner_join(get_sentiments("nrc"))
+```
+
+I then check which are excluded using `anti_join()`:
+
+```{r check-exclusions1}
+fogh1_exclude <- fogh1_stop %>% 
+  anti_join(get_sentiments("nrc"))
+
+View(fogh1_exclude)
+
+# Counting words to find the most excluded:
+fogh1_exclude_n <- fogh1_exclude %>% 
+  count(word, sort = TRUE)
+
+head(fogh1_exclude_n)
+```
+
+
+Now I find some counts by sentiment and word, and then facet them:
+```{r count-nrc1}
+fogh1_nrc_n5 <- fogh1_nrc %>% 
+  count(word,sentiment, sort = TRUE) %>% 
+  group_by(sentiment) %>% 
+  top_n(5) %>% 
+  ungroup()
+
+fogh1_nrc_gg <- ggplot(data = fogh1_nrc_n5, aes(x = reorder(word,n), y = n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, ncol = 2, scales = "free") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Anders Fogh Rasmussen's speech, Oct 2008",
+       x = "Sentiment", y = "Count")
+
+# Show it
+fogh1_nrc_gg
+
+# Save it
+ggsave(plot = fogh1_nrc_gg, 
+       here("figures","fogh1_nrc_sentiment.png"), 
+       height = 8, 
+       width = 5)
+
+```
+
+It seems that the word "government" shows up in NRC lexicon as "fear". I check:
+```{r nrc-government1}
+gov <- get_sentiments(lexicon = "nrc") %>% 
+  filter(word == "government")
+
+# Indeed, the word government belongs to the sentiments 'fear' and 'negative' in the NRC lexicon:
+gov
+```
+
+### SPEECH NUMBER TWO ('fogh2')
+"Prime Minister Anders Fogh Rasmussen, at the UN Climate Change Conference in Poznan, Poland at December 1, 2008"
+
+#Get the second speech:
+```{r get-document2}
+fogh2_path <- here("data","fogh2.pdf")
+fogh2_text <- pdf_text(fogh2_path)
+```
+
+### Some wrangling:
+- Here I split up the pages into separate lines (separated by `\n`) using `stringr::str_split()`
+- Unnest into regular columns using `tidyr::unnest()`
+- Remove leading/trailing white space with `stringr::str_trim()`
+
+```{r split-lines2}
+fogh2_df <- data.frame(fogh2_text) %>% 
+  mutate(text_full = str_split(fogh2_text, pattern = '\n')) %>% 
+  unnest(text_full) %>% 
+  mutate(text_full = str_trim(text_full)) 
+
+```
+
+Now each line, on each page, is its own row, with extra starting & trailing spaces removed. 
+
+### Get the tokens (individual words) in tidy format
+
+Here I use `tidytext::unnest_tokens()` (which pulls from the `tokenizer`) package, to split columns into tokens. I am interested in *words*, so that's the token we'll use:
+
+```{r tokenize2}
+fogh2_tokens <- fogh2_df %>% 
+  unnest_tokens(word, text_full)
+
+```
+
+Then I count the words
+```{r count-words2}
+fogh2_wc <- fogh2_tokens %>% 
+  count(word) %>% 
+  arrange(-n)
+fogh2_wc
+```
+
+At this point I notice that a whole bunch of things show up frequently that we might not be interested in ("the", "and", "to", etc.). These are called *stop words*. I will remove them.
+
+### Remove stop words:
+
+I remove stop words using `tidyr::anti_join()`:
+```{r stopwords2}
+fogh2_stop <- fogh2_tokens %>% 
+  anti_join(stop_words) %>% 
+  select(-fogh2_text)
+```
+
+And then check the counts again: 
+```{r count-words2.2}
+fogh2_swc <- fogh2_stop %>% 
+  count(word) %>% 
+  arrange(-n)
+fogh2_swc
+```
+
+Since I am interested in the words, I now want to get rid of all the numbers (non-text) in `fogh2_stop`
+```{r skip-numbers2}
+
+fogh2_no_numeric <- fogh2_stop %>% 
+  filter(is.na(as.numeric(word)))
+```
+
+### A word cloud of the first speech, 'fogh2'.
+
+```{r wordcloud-prep2}
+length(unique(fogh2_no_numeric$word))
+
+# I filter the wordcloud to only include the top 100 most frequent words
+
+fogh2_top100 <- fogh2_no_numeric %>% 
+  count(word) %>% 
+  arrange(-n) %>% 
+  head(100)
+fogh2_top100
+```
+
+```{r wordcloud2}
+fogh2_cloud <- ggplot(data = fogh2_top100, aes(label = word)) +
+  geom_text_wordcloud_area(aes(color = n), shape = "pentagram") +
+  scale_size_area(max_size = 12) +
+  scale_color_gradientn(colors = c("darkgreen","blue","red")) +
+  theme_minimal()
+
+
+# Save it
+ggsave(plot = fogh2_cloud, 
+       here("figures","fogh2_wordcloud.png"), 
+       height = 8, 
+       width = 5)
+
+fogh2_cloud
+```
+
+### Sentiment analysis
+
+Next I do sentiment analysis on the 'fogh2'-text data using the 'afinn', and 'nrc' general-purpose lexicons.
+The three general-purpose lexicons are
+
+  -  AFINN from Finn Årup Nielsen,
+  -  nrc from Saif Mohammad and Peter Turney
+
+The AFINN lexicon assigns words with a score that runs between -5 and 5, with negative scores indicating negative sentiment and positive scores indicating positive sentiment.
+
+The nrc lexicon categorizes words in a binary fashion (“yes”/“no”) into categories of positive, negative, anger, anticipation, disgust, fear, joy, sadness, surprise, and trust.
+
+
+### Sentiment analysis with afinn: 
+
+First I bind the words in `fogh2_stop` to `afinn` lexicon:
+```{r bind-afinn2}
+fogh2_afinn <- fogh2_stop %>% 
+  inner_join(get_sentiments("afinn"))
+fogh2_afinn
+```
+
+Then I find some counts (by sentiment ranking):
+```{r count-afinn2}
+fogh2_afinn_hist <- fogh2_afinn %>% 
+  count(value)
+
+# And plot them: 
+ggplot(data = fogh2_afinn_hist, aes(x = value, y = n)) +
+  geom_col(aes(fill = value)) +
+  theme_bw()
+```
+
+I want to investigate some of the words in a bit more depth:
+```{r afinn-2.2}
+# I want to know what these '2' words are
+fogh2_afinn2 <- fogh2_afinn %>% 
+  filter(value == 2)
+
+fogh2_afinn2
+```
+
+```{r afinn-2.2-more}
+# I check the unique 2-score words:
+unique(fogh2_afinn2$word)
+
+# Then count & plot them:
+fogh2_afinn2_n <- fogh2_afinn2 %>% 
+  count(word, sort = TRUE) %>% 
+  mutate(word = fct_reorder(factor(word), n))
+
+
+ggplot(data = fogh2_afinn2_n, aes(x = word, y = n)) +
+  geom_col() +
+  coord_flip() +
+  theme_bw()
+
+# So, as with the first speech from the earlier period of my study ('fogh1'+'fogh2'), the 2-score word 'growth' is used most often.
+```
+
+
+Summary of the sentiment of the speech, fogh2:
+```{r summarize-afinn2}
+fogh2_summary <- fogh2_afinn %>% 
+  summarize(
+    mean_score = mean(value),
+    median_score = median(value)
+  )
+fogh2_summary 
+
+# mean score of 0,91 and median score of 1 tells me that the second speech, fogh2, is positive in terms of the sentiment.
+```
+
+### NRC lexicon for sentiment analysis
+
+With the NRC lexicon I can "bin" the words of the text by the feelings they're typically associated with. As above, I use inner_join() to combine the fogh2 non-stopword text with the nrc lexicon: 
+
+```{r bind-nrc2}
+fogh2_nrc <- fogh2_stop %>% 
+  inner_join(get_sentiments("nrc"))
+```
+
+I then check which are excluded using `anti_join()`:
+
+```{r check-exclusions2}
+fogh2_exclude <- fogh2_stop %>% 
+  anti_join(get_sentiments("nrc"))
+
+View(fogh2_exclude)
+
+# Counting words to find the most excluded:
+fogh2_exclude_n <- fogh2_exclude %>% 
+  count(word, sort = TRUE)
+
+head(fogh2_exclude_n)
+```
+
+
+Now I find some counts by sentiment and word, and then facet them:
+```{r count-nrc2}
+fogh2_nrc_n5 <- fogh2_nrc %>% 
+  count(word,sentiment, sort = TRUE) %>% 
+  group_by(sentiment) %>% 
+  top_n(5) %>% 
+  ungroup()
+
+fogh2_nrc_gg <- ggplot(data = fogh2_nrc_n5, aes(x = reorder(word,n), y = n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, ncol = 2, scales = "free") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Anders Fogh Rasmussen's speech, Dec 2008",
+       x = "Sentiment", y = "Count")
+
+# Show it
+fogh2_nrc_gg
+
+# Save it
+ggsave(plot = fogh2_nrc_gg, 
+       here("figures","fogh2_nrc_sentiment.png"), 
+       height = 8, 
+       width = 5)
+
+```
+
+It seems that the word "change" shows up in NRC lexicon as "fear". I check:
+```{r nrc-change2}
+chg <- get_sentiments(lexicon = "nrc") %>% 
+  filter(word == "change")
+
+# Indeed, the word 'change' belongs to the sentiments 'fear' in the NRC lexicon:
+chg
+```
+
+### SPEECH NUMBER THREE ('frederiksen1')
+"Statsministerens tale ved C40 i København den 11. oktober 2019"
+
+#Get the third speech:
+```{r get-document3}
+frederiksen1_path <- here("data","frederiksen1.pdf")
+frederiksen1_text <- pdf_text(frederiksen1_path)
+```
+
+### Some wrangling:
+- Here I split up the pages into separate lines (separated by `\n`) using `stringr::str_split()`
+- Unnest into regular columns using `tidyr::unnest()`
+- Remove leading/trailing white space with `stringr::str_trim()`
+
+```{r split-lines3}
+frederiksen1_df <- data.frame(frederiksen1_text) %>% 
+  mutate(text_full = str_split(frederiksen1_text, pattern = '\n')) %>% 
+  unnest(text_full) %>% 
+  mutate(text_full = str_trim(text_full)) 
+
+```
+
+Now each line, on each page, is its own row, with extra starting & trailing spaces removed. 
+
+### Get the tokens (individual words) in tidy format
+
+Here I use `tidytext::unnest_tokens()` (which pulls from the `tokenizer`) package, to split columns into tokens. I am interested in *words*, so that's the token we'll use:
+
+```{r tokenize3}
+frederiksen1_tokens <- frederiksen1_df %>% 
+  unnest_tokens(word, text_full)
+
+```
+
+Then I count the words
+```{r count-words3}
+frederiksen1_wc <- frederiksen1_tokens %>% 
+  count(word) %>% 
+  arrange(-n)
+frederiksen1_wc
+```
+
+At this point I notice that a whole bunch of things show up frequently that we might not be interested in ("the", "of", "to", etc.). These are called *stop words*. I will remove them.
+
+### Remove stop words:
+
+I remove stop words using `tidyr::anti_join()`:
+```{r stopwords3}
+frederiksen1_stop <- frederiksen1_tokens %>% 
+  anti_join(stop_words) %>% 
+  select(-frederiksen1_text)
+```
+
+And then check the counts again: 
+```{r count-words3.2}
+frederiksen1_swc <- frederiksen1_stop %>% 
+  count(word) %>% 
+  arrange(-n)
+frederiksen1_swc
+```
+
+Since I am interested in the words, I now want to get rid of all the numbers (non-text) in `frederiksen1_stop`
+```{r skip-numbers3}
+
+frederiksen1_no_numeric <- frederiksen1_stop %>% 
+  filter(is.na(as.numeric(word)))
+```
+
+### A word cloud of the first speech, 'frederiksen1'.
+
+```{r wordcloud-prep3}
+length(unique(frederiksen1_no_numeric$word))
+
+# I filter the wordcloud to only include the top 100 most frequent words
+
+frederiksen1_top100 <- frederiksen1_no_numeric %>% 
+  count(word) %>% 
+  arrange(-n) %>% 
+  head(100)
+frederiksen1_top100
+```
+
+```{r wordcloud3}
+frederiksen1_cloud <- ggplot(data = frederiksen1_top100, aes(label = word)) +
+  geom_text_wordcloud_area(aes(color = n), shape = "pentagram") +
+  scale_size_area(max_size = 12) +
+  scale_color_gradientn(colors = c("darkgreen","blue","red")) +
+  theme_minimal()
+
+
+# Save it
+ggsave(plot = frederiksen1_cloud, 
+       here("figures","frederiksen1_wordcloud.png"), 
+       height = 8, 
+       width = 5)
+
+frederiksen1_cloud
+```
+
+### Sentiment analysis
+
+Next I do sentiment analysis on the 'frederiksen1'-text data using the 'afinn', and 'nrc' general-purpose lexicons.
+The three general-purpose lexicons are
+
+  -  AFINN from Finn Årup Nielsen,
+  -  nrc from Saif Mohammad and Peter Turney
+
+The AFINN lexicon assigns words with a score that runs between -5 and 5, with negative scores indicating negative sentiment and positive scores indicating positive sentiment.
+
+The nrc lexicon categorizes words in a binary fashion (“yes”/“no”) into categories of positive, negative, anger, anticipation, disgust, fear, joy, sadness, surprise, and trust.
+
+
+### Sentiment analysis with afinn: 
+
+First I bind the words in `frederiksen1_stop` to `afinn` lexicon:
+```{r bind-afinn3}
+frederiksen1_afinn <- frederiksen1_stop %>% 
+  inner_join(get_sentiments("afinn"))
+frederiksen1_afinn
+```
+
+Then I find some counts (by sentiment ranking):
+```{r count-afinn3}
+frederiksen1_afinn_hist <- frederiksen1_afinn %>% 
+  count(value)
+
+# And plot them: 
+ggplot(data = frederiksen1_afinn_hist, aes(x = value, y = n)) +
+  geom_col(aes(fill = value)) +
+  theme_bw()
+```
+
+I want to investigate some of the words in a bit more depth:
+```{r afinn-3.2}
+# I want to know what these '2' words are
+frederiksen1_afinn2 <- frederiksen1_afinn %>% 
+  filter(value == 2)
+```
+
+```{r afinn-3.2-more}
+# I check the unique 2-score words:
+unique(frederiksen1_afinn2$word)
+
+# Then count & plot them:
+frederiksen1_afinn2_n <- frederiksen1_afinn2 %>% 
+  count(word, sort = TRUE) %>% 
+  mutate(word = fct_reorder(factor(word), n))
+
+
+ggplot(data = frederiksen1_afinn2_n, aes(x = word, y = n)) +
+  geom_col() +
+  coord_flip() +
+  theme_bw()
+
+# So, of the 2-score words 'clean' is used far more often.
+```
+
+
+Summary of the sentiment of the speech, frederiksen1:
+```{r summarize-afinn3}
+frederiksen1_summary <- frederiksen1_afinn %>% 
+  summarize(
+    mean_score = mean(value),
+    median_score = median(value)
+  )
+frederiksen1_summary 
+
+# mean score of 1,39 and median score of 2 tells me that the third speech, frederiksen1, is overall rather positive in terms of the sentiment.
+```
+
+### NRC lexicon for sentiment analysis
+
+With the NRC lexicon I can "bin" the words of the text by the feelings they're typically associated with. As above, I use inner_join() to combine the frederiksen1 non-stopword text with the nrc lexicon: 
+
+```{r bind-nrc3}
+frederiksen1_nrc <- frederiksen1_stop %>% 
+  inner_join(get_sentiments("nrc"))
+```
+
+I then check which are excluded using `anti_join()`:
+
+```{r check-exclusions3}
+frederiksen1_exclude <- frederiksen1_stop %>% 
+  anti_join(get_sentiments("nrc"))
+
+View(frederiksen1_exclude)
+
+# Counting words to find the most excluded:
+frederiksen1_exclude_n <- frederiksen1_exclude %>% 
+  count(word, sort = TRUE)
+
+head(frederiksen1_exclude_n)
+```
+
+
+Now I find some counts by sentiment and word, and then facet them:
+```{r count-nrc3}
+frederiksen1_nrc_n5 <- frederiksen1_nrc %>% 
+  count(word,sentiment, sort = TRUE) %>% 
+  group_by(sentiment) %>% 
+  top_n(5) %>% 
+  ungroup()
+
+frederiksen1_nrc_gg <- ggplot(data = frederiksen1_nrc_n5, aes(x = reorder(word,n), y = n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, ncol = 2, scales = "free") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Mette Frederiksen's speech 2019",
+       x = "Sentiment", y = "Count")
+
+# Show it
+frederiksen1_nrc_gg
+
+# Save it
+ggsave(plot = frederiksen1_nrc_gg, 
+       here("figures","frederiksen1_nrc_sentiment.png"), 
+       height = 8, 
+       width = 5)
+
+```
+
+It seems that the word "green" shows up in NRC lexicon as "joy", "positive" and "trust". I check:
+```{r nrc-green3}
+green <- get_sentiments(lexicon = "nrc") %>% 
+  filter(word == "green")
+
+# Indeed, the word "green" belongs to the sentiments 'joy', 'positive' and 'trust' in the NRC lexicon:
+green
+```
+
+### SPEECH NUMBER FOUR ('frederiksen2')
+"Statsminister Mette Frederiksens tale ved Leaders Summit on Climate den 23. april 2021"
+
+#Get the fourth speech:
+```{r get-document4}
+frederiksen2_path <- here("data","frederiksen2.pdf")
+frederiksen2_text <- pdf_text(frederiksen2_path)
+```
+
+### Some wrangling:
+- Here I split up the pages into separate lines (separated by `\n`) using `stringr::str_split()`
+- Unnest into regular columns using `tidyr::unnest()`
+- Remove leading/trailing white space with `stringr::str_trim()`
+
+```{r split-lines4}
+frederiksen2_df <- data.frame(frederiksen2_text) %>% 
+  mutate(text_full = str_split(frederiksen2_text, pattern = '\n')) %>% 
+  unnest(text_full) %>% 
+  mutate(text_full = str_trim(text_full)) 
+
+```
+
+Now each line, on each page, is its own row, with extra starting & trailing spaces removed. 
+
+### Get the tokens (individual words) in tidy format
+
+Here I use `tidytext::unnest_tokens()` (which pulls from the `tokenizer`) package, to split columns into tokens. I am interested in *words*, so that's the token we'll use:
+
+```{r tokenize4}
+frederiksen2_tokens <- frederiksen2_df %>% 
+  unnest_tokens(word, text_full)
+
+```
+
+Then I count the words
+```{r count-words4}
+frederiksen2_wc <- frederiksen2_tokens %>% 
+  count(word) %>% 
+  arrange(-n)
+frederiksen2_wc
+```
+
+At this point I notice that a whole bunch of things show up frequently that we might not be interested in ("the", "on", "Mette", etc.). These are called *stop words*. I will remove them.
+
+### Remove stop words:
+
+I remove stop words using `tidyr::anti_join()`:
+```{r stopwords4}
+frederiksen2_stop <- frederiksen2_tokens %>% 
+  anti_join(stop_words) %>% 
+  select(-frederiksen2_text)
+```
+
+And then check the counts again: 
+```{r count-words4.2}
+frederiksen2_swc <- frederiksen2_stop %>% 
+  count(word) %>% 
+  arrange(-n)
+frederiksen2_swc
+```
+
+Since I am interested in the words, I now want to get rid of all the numbers (non-text) in `frederiksen2_stop`
+```{r skip-numbers4}
+
+frederiksen2_no_numeric <- frederiksen2_stop %>% 
+  filter(is.na(as.numeric(word)))
+```
+
+### A word cloud of the first speech, 'frederiksen2'.
+
+```{r wordcloud-prep4}
+length(unique(frederiksen2_no_numeric$word))
+
+# I filter the wordcloud to only include the top 100 most frequent words
+
+frederiksen2_top100 <- frederiksen2_no_numeric %>% 
+  count(word) %>% 
+  arrange(-n) %>% 
+  head(100)
+frederiksen2_top100
+```
+
+```{r wordcloud4}
+frederiksen2_cloud <- ggplot(data = frederiksen2_top100, aes(label = word)) +
+  geom_text_wordcloud_area(aes(color = n), shape = "pentagram") +
+  scale_size_area(max_size = 12) +
+  scale_color_gradientn(colors = c("darkgreen","blue","red")) +
+  theme_minimal()
+
+
+# Save it
+ggsave(plot = frederiksen2_cloud, 
+       here("figures","frederiksen2_wordcloud.png"), 
+       height = 8, 
+       width = 5)
+
+frederiksen2_cloud
+```
+
+### Sentiment analysis
+
+Next I do sentiment analysis on the 'frederiksen2'-text data using the 'afinn', and 'nrc' general-purpose lexicons.
+The three general-purpose lexicons are
+
+  -  AFINN from Finn Årup Nielsen,
+  -  nrc from Saif Mohammad and Peter Turney
+
+The AFINN lexicon assigns words with a score that runs between -5 and 5, with negative scores indicating negative sentiment and positive scores indicating positive sentiment.
+
+The nrc lexicon categorizes words in a binary fashion (“yes”/“no”) into categories of positive, negative, anger, anticipation, disgust, fear, joy, sadness, surprise, and trust.
+
+
+### Sentiment analysis with afinn: 
+
+First I bind the words in `frederiksen2_stop` to `afinn` lexicon:
+```{r bind-afinn4}
+frederiksen2_afinn <- frederiksen2_stop %>% 
+  inner_join(get_sentiments("afinn"))
+frederiksen2_afinn
+```
+
+Then I find some counts (by sentiment ranking):
+```{r count-afinn4}
+frederiksen2_afinn_hist <- frederiksen2_afinn %>% 
+  count(value)
+
+# And plot them: 
+ggplot(data = frederiksen2_afinn_hist, aes(x = value, y = n)) +
+  geom_col(aes(fill = value)) +
+  theme_bw()
+```
+
+I want to investigate some of the words in a bit more depth:
+```{r afinn-4.1}
+# I want to know what these '1' words are
+frederiksen2_afinn1 <- frederiksen2_afinn %>% 
+  filter(value == 1)
+```
+
+```{r afinn-4.1-more}
+# I check the unique 1-score words:
+unique(frederiksen2_afinn1$word)
+
+# Then count & plot them:
+frederiksen2_afinn1_n <- frederiksen2_afinn1 %>% 
+  count(word, sort = TRUE) %>% 
+  mutate(word = fct_reorder(factor(word), n))
+
+
+ggplot(data = frederiksen2_afinn1_n, aes(x = word, y = n)) +
+  geom_col() +
+  coord_flip() +
+  theme_bw()
+
+# So, of the 1-score words 'innovation' is used more often.
+```
+
+
+Summary of the sentiment of the speech, frederiksen2:
+```{r summarize-afinn4}
+frederiksen2_summary <- frederiksen2_afinn %>% 
+  summarize(
+    mean_score = mean(value),
+    median_score = median(value)
+  )
+frederiksen2_summary 
+
+# mean score of 1,05 and median score of 1 tells me that the first speech, frederiksen2, is overall somewhat positive in terms of the sentiment.
+```
+
+### NRC lexicon for sentiment analysis
+
+With the NRC lexicon I can "bin" the words of the text by the feelings they're typically associated with. As above, I use inner_join() to combine the frederiksen2 non-stopword text with the nrc lexicon: 
+
+```{r bind-nrc4}
+frederiksen2_nrc <- frederiksen2_stop %>% 
+  inner_join(get_sentiments("nrc"))
+```
+
+I then check which are excluded using `anti_join()`:
+
+```{r check-exclusions4}
+frederiksen2_exclude <- frederiksen2_stop %>% 
+  anti_join(get_sentiments("nrc"))
+
+View(frederiksen2_exclude)
+
+# Counting words to find the most excluded:
+frederiksen2_exclude_n <- frederiksen2_exclude %>% 
+  count(word, sort = TRUE)
+
+head(frederiksen2_exclude_n)
+```
+
+
+Now I find some counts by sentiment and word, and then facet them:
+```{r count-nrc4}
+frederiksen2_nrc_n5 <- frederiksen2_nrc %>% 
+  count(word,sentiment, sort = TRUE) %>% 
+  group_by(sentiment) %>% 
+  top_n(5) %>% 
+  ungroup()
+
+frederiksen2_nrc_gg <- ggplot(data = frederiksen2_nrc_n5, aes(x = reorder(word,n), y = n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, ncol = 2, scales = "free") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Mette Frederiksen's speech 2021",
+       x = "Sentiment", y = "Count")
+
+# Show it
+frederiksen2_nrc_gg
+
+# Save it
+ggsave(plot = frederiksen2_nrc_gg, 
+       here("figures","frederiksen2_nrc_sentiment.png"), 
+       height = 8, 
+       width = 5)
+
+```
+
+It seems that, as with the third speech, the word "green" shows up in NRC lexicon as "trust" and "joy". I check this again:
+```{r nrc-green4}
+green <- get_sentiments(lexicon = "nrc") %>% 
+  filter(word == "green")
+
+# Indeed, the word green belongs to the sentiments 'joy', 'positive' and 'trust' in the NRC lexicon:
+green
+```
+
+Finally, I want to create a combined visual with the sentiments of all four speeches.
+```{r nrc combined visualization}
+# First, I add a document label to each of the earlier faceted speeches
+fogh1_nrc_n5$document <- "Anders Fogh Rasmussen Oct 2008"
+fogh2_nrc_n5$document <- "Anders Fogh Rasmussen Dec 2008"
+frederiksen1_nrc_n5$document <- "Mette Frederiksen 2019"
+frederiksen2_nrc_n5$document <- "Mette Frederiksen 2021"
+
+# Then I combine the four into one data frame
+all_sentiments_nrc <- bind_rows(
+  fogh1_nrc_n5,
+  fogh2_nrc_n5,
+  frederiksen1_nrc_n5,
+  frederiksen2_nrc_n5
+)
+
+# Create the plot
+facet_sentiment_plot <- ggplot(all_sentiments_nrc, aes(y = reorder(sentiment, n), x = n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ document, scales = "free_y") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Sentiment counts compared",
+       x = "Sentiment", y = "Count")
+
+# Save it
+ggsave(plot = facet_sentiment_plot, 
+       here("figures","facet_sentiment_plot.png"), 
+       height = 8, 
+       width = 5)
+
+# Show plot
+facet_sentiment_plot
+```
+
